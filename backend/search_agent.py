@@ -16,7 +16,7 @@ fireworks_client = InferenceClient(
 FIREWORKS_MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
 # Fallback: Free-tier Flan
-flan_client = InferenceClient(token=os.getenv("HF_TOKEN"))
+flan_client = InferenceClient(token=os.getenv("HF_TOKEN"), provider = None)
 FLAN_MODEL = "google/flan-t5-xl"
 
 def run_search_agent(question: str):
