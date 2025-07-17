@@ -2,36 +2,36 @@ import os
 import traceback
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
+from huggingface_hub.utils import HfHubHTTPError
 from backend.tools.websearch_tool import search_web
 from backend.tools.scrape_tool import scrape_urls, last_sources
 
 load_dotenv()
 
+# Primary: Fireworks (DeepSeek)
 fireworks_client = InferenceClient(
     provider="fireworks-ai",
     api_key=os.getenv("HF_TOKEN")
 )
 FIREWORKS_MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
-# Fallback: standard inference client for flan
+# Fallback: Free-tier Flan
 flan_client = InferenceClient(token=os.getenv("HF_TOKEN"))
 FLAN_MODEL = "google/flan-t5-xl"
 
 def run_search_agent(question: str):
-    try:
-        print(f"== Searching web for: {question}")
-        urls = search_web(question)
+    print(f"== Searching web for: {question}")
+    urls = search_web(question)
+    scraped = scrape_urls(urls)
 
-        scraped = scrape_urls(urls)
+    if not scraped.strip():
+        return {
+            "answer": "I couldn’t find enough relevant content to answer this question from the web.",
+            "sources": [],
+            "log": "No content scraped."
+        }
 
-        if not scraped.strip() or "could not extract" in scraped.lower():
-            return {
-                "answer": "I couldn’t find relevant information online to answer this query.",
-                "sources": [],
-                "log": "No content scraped."
-            }
-
-        prompt = f"""You are a helpful assistant. Only answer based on the following web content. Do not use prior knowledge.
+    prompt = f"""You are a helpful assistant. Answer the following question based only on the content provided.
 
 Question: {question}
 
@@ -40,7 +40,7 @@ Web Content:
 
 Answer:"""
 
-        try:
+    try:
         print("== Trying DeepSeek model via Fireworks...")
         response = fireworks_client.chat.completions.create(
             model=FIREWORKS_MODEL,
@@ -50,7 +50,7 @@ Answer:"""
         model_used = FIREWORKS_MODEL
 
     except HfHubHTTPError as e:
-        if "402" in str(e) or "Payment Required" in str(e):
+        if hasattr(e, "response") and getattr(e.response, "status_code", None) == 402:
             print("== Fireworks usage limit exceeded, falling back to Flan-T5...")
             try:
                 response = flan_client.text_generation(
