@@ -24,7 +24,7 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("Searching the web and thinking..."):
             try:
-                res = requests.post("https://searchsage-backend.onrender.com/query", json={"question": user_input})
+                res = requests.post("https://searchsage.onrender.com/query", json={"question": user_input})
                 res.raise_for_status()
                 data = res.json()
 
