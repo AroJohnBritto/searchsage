@@ -1,22 +1,20 @@
 import os
 import traceback
 from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
-from huggingface_hub.utils import HfHubHTTPError
+from openai import OpenAI
 from backend.tools.websearch_tool import search_web
 from backend.tools.scrape_tool import scrape_urls, last_sources
 
 load_dotenv()
 
-# Primary model (Fireworks)
-fireworks_client = InferenceClient(
-    provider="fireworks-ai",
-    api_key=os.getenv("HF_TOKEN")
-)
-FIREWORKS_MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
-# Fallback model: No provider, no reuse of config
-FLAN_MODEL = "google/flan-t5-xl"
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY")
+)
+
+DEEPSEEK_MODEL = "deepseek/deepseek-r1:free"
+
 
 def run_search_agent(question: str):
     print(f"== Searching web for: {question}")
@@ -30,53 +28,27 @@ def run_search_agent(question: str):
             "log": "No content scraped."
         }
 
-    prompt = f"""Answer the following question based only on the content provided.\n\nQuestion: {question}\n\nWeb Content:\n{scraped}\n\nAnswer:"""
+    prompt = f"""You are a helpful assistant. Answer the following question based only on the content provided.\n\nQuestion: {question}\n\nWeb Content:\n{scraped}\n\nAnswer:"""
 
     try:
-        print("== Trying DeepSeek model via Fireworks...")
-        response = fireworks_client.chat.completions.create(
-            model=FIREWORKS_MODEL,
-            messages=[{"role": "user", "content": prompt}]
+        print("== Calling DeepSeek model via OpenRouter...")
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            extra_headers={
+                "HTTP-Referer": "https://yourprojectname.streamlit.app",
+                "X-Title": "SearchSage"
+            }
         )
         answer = response.choices[0].message.content.strip()
-        model_used = FIREWORKS_MODEL
-
-    except HfHubHTTPError as e:
-        if hasattr(e, "response") and getattr(e.response, "status_code", None) == 402:
-            print("== Fireworks limit hit. Falling back to flan-t5-xl...")
-            try:
-                # NEW client created for fallback
-                flan_client = InferenceClient(
-                    token=os.getenv("HF_TOKEN"),
-                    provider=None
-                )
-                response = flan_client.text_generation(
-                    model=FLAN_MODEL,
-                    prompt=prompt,
-                    max_new_tokens=300,
-                    temperature=0.7
-                )
-                answer = response.generated_text.strip()
-                model_used = FLAN_MODEL
-            except Exception as fallback_error:
-                traceback.print_exc()
-                return {
-                    "answer": "Both primary and fallback models failed. Please try again later.",
-                    "sources": [],
-                    "log": str(fallback_error)
-                }
-        else:
-            traceback.print_exc()
-            return {
-                "answer": "Fireworks model failed unexpectedly.",
-                "sources": [],
-                "log": str(e)
-            }
+        model_used = DEEPSEEK_MODEL
 
     except Exception as e:
         traceback.print_exc()
         return {
-            "answer": "Unexpected error occurred.",
+            "answer": "The DeepSeek model failed. Please try again later.",
             "sources": [],
             "log": str(e)
         }
