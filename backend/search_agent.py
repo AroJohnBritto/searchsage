@@ -7,12 +7,15 @@ from backend.tools.scrape_tool import scrape_urls, last_sources
 
 load_dotenv()
 
-client = InferenceClient(
+fireworks_client = InferenceClient(
     provider="fireworks-ai",
     api_key=os.getenv("HF_TOKEN")
 )
+FIREWORKS_MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
-MODEL_ID = "deepseek-ai/DeepSeek-R1-0528"
+# Fallback: standard inference client for flan
+flan_client = InferenceClient(token=os.getenv("HF_TOKEN"))
+FLAN_MODEL = "google/flan-t5-xl"
 
 def run_search_agent(question: str):
     try:
@@ -37,20 +40,41 @@ Web Content:
 
 Answer:"""
 
-        print("== Calling model with scraped content only...")
-
-        response = client.chat.completions.create(
-            model=MODEL_ID,
+        try:
+        print("== Trying DeepSeek model via Fireworks...")
+        response = fireworks_client.chat.completions.create(
+            model=FIREWORKS_MODEL,
             messages=[{"role": "user", "content": prompt}]
         )
-
         answer = response.choices[0].message.content.strip()
+        model_used = FIREWORKS_MODEL
 
-        return {
-            "answer": answer,
-            "sources": last_sources.copy(),
-            "log": "Answer generated strictly from scraped content."
-        }
+    except HfHubHTTPError as e:
+        if "402" in str(e) or "Payment Required" in str(e):
+            print("== Fireworks usage limit exceeded, falling back to Flan-T5...")
+            try:
+                response = flan_client.text_generation(
+                    model=FLAN_MODEL,
+                    prompt=prompt,
+                    max_new_tokens=300,
+                    temperature=0.7
+                )
+                answer = response.generated_text.strip()
+                model_used = FLAN_MODEL
+            except Exception as fallback_error:
+                traceback.print_exc()
+                return {
+                    "answer": "Both primary and fallback models failed. Please try again later.",
+                    "sources": [],
+                    "log": str(fallback_error)
+                }
+        else:
+            traceback.print_exc()
+            return {
+                "answer": "Fireworks AI model failed unexpectedly.",
+                "sources": [],
+                "log": str(e)
+            }
 
     except Exception as e:
         traceback.print_exc()
@@ -59,3 +83,9 @@ Answer:"""
             "sources": [],
             "log": str(e)
         }
+
+    return {
+        "answer": answer,
+        "sources": last_sources.copy(),
+        "log": f"Answer generated using: {model_used}"
+    }
