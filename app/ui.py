@@ -12,7 +12,7 @@ if not st.session_state.messages:
     with st.chat_message("assistant"):
         st.markdown("Hello! Ask me anything. I will search the web and scrape real content to answer your question.")
 
-# User input field
+# input field
 user_input = st.chat_input("Type your message here...")
 
 if user_input:
@@ -29,7 +29,6 @@ if user_input:
                 data = res.json()
 
                 # Display assistant response
-                # Separate <think> section if present
                 full_answer = data.get("answer", "No answer returned.")
                 if "<think>" in full_answer and "</think>" in full_answer:
                     start = full_answer.find("<think>") + len("<think>")
@@ -43,11 +42,11 @@ if user_input:
                 # Show main answer
                 st.markdown(answer)
 
-                # Optional: show <think> section in collapsible box
+                # Dropdown for think section
                 if thinking:
                     with st.expander("Show assistant's reasoning (optional)", expanded=False):
                         st.markdown(thinking)
-                # Show scraped source URLs if available
+                # scraped source URLs if available
                 if data.get("sources"):
                     st.markdown("**Sources scraped from the web:**")
                     for src in data["sources"]:
