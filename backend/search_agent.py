@@ -8,15 +8,14 @@ from backend.tools.scrape_tool import scrape_urls, last_sources
 
 load_dotenv()
 
-# Primary: Fireworks (DeepSeek)
+# Primary model (Fireworks)
 fireworks_client = InferenceClient(
     provider="fireworks-ai",
     api_key=os.getenv("HF_TOKEN")
 )
 FIREWORKS_MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
-# Fallback: Free-tier Flan
-flan_client = InferenceClient(token=os.getenv("HF_TOKEN"), provider = None)
+# Fallback model: No provider, no reuse of config
 FLAN_MODEL = "google/flan-t5-xl"
 
 def run_search_agent(question: str):
@@ -31,14 +30,7 @@ def run_search_agent(question: str):
             "log": "No content scraped."
         }
 
-    prompt = f"""You are a helpful assistant. Answer the following question based only on the content provided.
-
-Question: {question}
-
-Web Content:
-{scraped}
-
-Answer:"""
+    prompt = f"""Answer the following question based only on the content provided.\n\nQuestion: {question}\n\nWeb Content:\n{scraped}\n\nAnswer:"""
 
     try:
         print("== Trying DeepSeek model via Fireworks...")
@@ -51,8 +43,13 @@ Answer:"""
 
     except HfHubHTTPError as e:
         if hasattr(e, "response") and getattr(e.response, "status_code", None) == 402:
-            print("== Fireworks usage limit exceeded, falling back to Flan-T5...")
+            print("== Fireworks limit hit. Falling back to flan-t5-xl...")
             try:
+                # NEW client created for fallback
+                flan_client = InferenceClient(
+                    token=os.getenv("HF_TOKEN"),
+                    provider=None
+                )
                 response = flan_client.text_generation(
                     model=FLAN_MODEL,
                     prompt=prompt,
@@ -71,7 +68,7 @@ Answer:"""
         else:
             traceback.print_exc()
             return {
-                "answer": "Fireworks AI model failed unexpectedly.",
+                "answer": "Fireworks model failed unexpectedly.",
                 "sources": [],
                 "log": str(e)
             }
@@ -79,7 +76,7 @@ Answer:"""
     except Exception as e:
         traceback.print_exc()
         return {
-            "answer": "An error occurred while processing your request.",
+            "answer": "Unexpected error occurred.",
             "sources": [],
             "log": str(e)
         }
