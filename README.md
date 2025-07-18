@@ -38,7 +38,7 @@ SearchSage implements this exact workflow, giving you the power to build AI assi
 - **Caching System**: Optimize performance with intelligent result caching
 - **Rate Limiting**: Respect API limits and implement proper throttling
 
-## 🛠How It Works
+## How It Works
 
 ```mermaid
 graph LR
