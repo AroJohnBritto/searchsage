@@ -5,4 +5,14 @@ services:
     plan: free
     buildCommand: ""
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port 10000
-    
+
+  - type: web
+    name: searchsage-ui
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: streamlit run app/ui.py --server.port 10000 --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: SEARCHSAGE_BACKEND_URL
+        sync: false
+

@@ -94,6 +94,26 @@ Every response carries an `X-Request-ID` header for correlating with
 server logs. Unhandled errors always return a generic message, never
 internal exception text.
 
+## Deployment
+
+`render.yaml` defines two Render web services:
+
+- `searchsage-backend` runs the FastAPI app.
+- `searchsage-ui` runs the Streamlit app, with `SEARCHSAGE_BACKEND_URL` set
+  in Render's dashboard to the backend service's URL.
+
+Each service needs its own env vars set in Render's dashboard, they are not
+read from `.env.example`. The backend needs the provider keys plus
+`APP_URL` set to its own live URL. The UI service needs
+`SEARCHSAGE_BACKEND_URL` set to the backend's live URL.
+
+To put a custom domain in front of the UI service (the one people actually
+visit), add a CNAME record at your DNS provider for the subdomain pointing
+at the UI service's `onrender.com` hostname, then add that domain under
+the service's Custom Domains settings in Render. Render provisions TLS
+automatically once the CNAME resolves. Point the domain at the UI service,
+not the backend, since the backend is an API with no user-facing pages.
+
 ## Auth and rate limiting
 
 Set `AUTH_ENABLED=true` and `API_KEYS=key1,key2` to require an
