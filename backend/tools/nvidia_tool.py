@@ -13,11 +13,17 @@ SYSTEM_PROMPT = (
 
 
 def _build_messages(history: list[dict], question: str) -> list[dict]:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    """Build a messages list with no system role.
+
+    Some hosted instruct models (Mistral's chat template among them) reject
+    a system role message outright, so the guidance is folded into the
+    latest user turn instead of sent as a separate message.
+    """
+    messages = []
     for turn in history:
         role = "assistant" if turn["role"] == "assistant" else "user"
         messages.append({"role": role, "content": turn["content"]})
-    messages.append({"role": "user", "content": question})
+    messages.append({"role": "user", "content": f"{SYSTEM_PROMPT}\n\n{question}"})
     return messages
 
 
