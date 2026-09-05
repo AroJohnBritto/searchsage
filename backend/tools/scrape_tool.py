@@ -1,31 +1,42 @@
 import requests
-from bs4 import BeautifulSoup
 
-last_sources = []
+MAX_PAGES = 2
+MAX_PARAGRAPHS_PER_PAGE = 8
 
-def scrape_urls(url_list_str: str) -> str:
-    global last_sources
-    urls = url_list_str.strip().split("\n")
-    contents = []
-    last_sources.clear()
+
+def scrape_urls(urls: list[str]) -> tuple[str, list[str]]:
+    """Scrape each URL and return (combined_text, sources).
+
+    Returns a tuple rather than storing state in a module-level variable,
+    since FastAPI runs each request in a thread-pool executor and a shared
+    global would get clobbered between concurrent requests. On failure a
+    URL is skipped silently, never replaced with placeholder text that
+    could get fed to the LLM as if it were real page content.
+    """
+    from bs4 import BeautifulSoup
+
+    contents: list[str] = []
+    sources: list[str] = []
 
     for url in urls:
         try:
-            print(f"Scraping URL: {url}")
-            res = requests.get(url, timeout=8)
-            soup = BeautifulSoup(res.text, "html.parser")
-
-            paragraphs = [p.get_text() for p in soup.find_all("p") if p.get_text().strip()]
-            text = " ".join(paragraphs[:8])
-            if text:
-                contents.append(text)
-                last_sources.append(url)
-        except Exception as e:
-            print(f"[scrape_tool] Failed to scrape {url}: {e}")
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            response.raise_for_status()
+        except requests.RequestException:
             continue
 
-    if not contents:
-        print("[scrape_tool] No content extracted from any URLs.")
-        return "We were unable to extract relevant content from the web."
+        soup = BeautifulSoup(response.text, "html.parser")
+        paragraphs = [p.get_text().strip() for p in soup.find_all("p") if p.get_text().strip()]
+        if not paragraphs:
+            continue
 
-    return "\n\n".join(contents[:2])
+        contents.append(" ".join(paragraphs[:MAX_PARAGRAPHS_PER_PAGE]))
+        sources.append(url)
+
+        if len(contents) >= MAX_PAGES:
+            break
+
+    if not contents:
+        return "", []
+
+    return "\n\n".join(contents), sources

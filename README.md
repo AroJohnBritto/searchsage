@@ -1,111 +1,119 @@
 # SearchSage
 
-> Have you ever wondered how ChatGPT retrieves real-time information from the web? 
+SearchSage answers questions by trying three tiers of grounding, in order,
+until one succeeds. The public API never reveals which tier or provider
+produced an answer, it only reports a generic freshness indicator (`live`
+or `general`).
 
-SearchSage demystifies this process by implementing a powerful web search integration system that enables AI assistants to access live information from the internet, just like modern conversational AI systems do.
+## How answers are produced
 
-## The Problem
+1. **Tier 1**: a lightweight local heuristic decides whether the question
+   needs live information (skipping obviously definitional or how-to
+   questions to save latency). A single call is made either way, with a
+   live search grounding tool attached only when needed.
+2. **Tier 2**: if tier 1 is not configured or fails, a hosted
+   knowledge-only model answers from its training data, no live search.
+3. **Tier 3**: last resort. The question is used to search the web, the
+   top results are scraped, the scraped text is sanitized against prompt
+   injection, and a model answers using only that scraped content as
+   reference.
 
-Traditional AI models are limited by their training data cutoff dates. They can't tell you:
-- Today's weather
-- Latest news headlines  
-- Current stock prices
-- Real-time sports scores
-- Recent scientific discoveries
+Within each tier, transient failures are retried with backoff. Missing
+configuration is never retried, that tier is skipped immediately and the
+next tier is tried.
 
-But ChatGPT and similar systems somehow know about current events. How?
+## Setup
 
-## The Solution
-[Live Demo](https://searchsageweb.streamlit.app/)
-
-SearchSage reveals the magic behind real-time AI responses by implementing the same core concept: **Function Calling + Web Search APIs**. 
-
-When you ask ChatGPT "What's the weather like today?", it doesn't actually "know" the weather. Instead, it:
-
-1. **Recognizes** that your question requires real-time data
-2. **Calls** a search function to query the web
-3. **Processes** the search results 
-4. **Generates** a natural language response based on the findings
-
-SearchSage implements this exact workflow, giving you the power to build AI assistants that can access live information.
-
-## Features
-
-- **Real-time Web Search**: Integrate live web data into your AI responses
-- **Intelligent Query Processing**: Automatically determine when web search is needed
-- **Result Parsing**: Extract and structure relevant information from search results
-- **Context-Aware Responses**: Generate natural language responses based on search findings
-- **Caching System**: Optimize performance with intelligent result caching
-- **Rate Limiting**: Respect API limits and implement proper throttling
-
-## How It Works
-
-```mermaid
-graph LR
-    A[User Query] --> B{Needs Real-time Data?}
-    B -->|Yes| C[Generate Search Query]
-    B -->|No| D[Use Training Data]
-    C --> E[Call Search API]
-    E --> F[Parse Results]
-    F --> G[Generate Response]
-    G --> H[Return to User]
-    D --> H
+```bash
+python -m venv .venv
+source .venv/bin/activate   # .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+cp .env.example .env        # then fill in your keys
 ```
 
+Run everything locally:
 
-
-## Understanding the Magic
-
-Here's what happens behind the scenes when you ask ChatGPT about current events:
-
-1. **Intent Recognition**: The AI analyzes your query to determine if it requires real-time information
-2. **Query Optimization**: It reformulates your question into an effective search query
-3. **API Call**: Makes a request to search APIs (Google, Bing, etc.)
-4. **Result Processing**: Extracts relevant information from search results
-5. **Response Generation**: Synthesizes findings into a natural, conversational response
-
-SearchSage implements each of these steps, giving you the building blocks to create your own real-time AI assistant.
-
-## Examples
-
-### Weather Query
-```
-User: "What's the weather like in Tokyo today?"
-SearchSage: *searches web* → "It's currently 22°C and sunny in Tokyo with light winds..."
+```bash
+./run_all.sh
 ```
 
-### News Query  
-```
-User: "Any recent developments in space exploration?"
-SearchSage: *searches web* → "NASA recently announced the successful deployment of..."
-```
+This starts the FastAPI backend on `http://localhost:8000` and the
+Streamlit UI on its default port, pointed at that local backend.
 
-### Stock Query
-```
-User: "How is Tesla stock performing today?"
-SearchSage: *searches web* → "Tesla (TSLA) is currently trading at $245.67, up 2.3%..."
+To run the pieces separately:
+
+```bash
+uvicorn backend.main:app --reload
+SEARCHSAGE_BACKEND_URL=http://localhost:8000 streamlit run app/ui.py
 ```
 
-## Contributing
+## Environment variables
 
-We welcome contributions! Here's how you can help:
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_API_KEY` | Tier 1 credential. |
+| `GEMINI_MODEL` | Tier 1 model name. |
+| `NVIDIA_API_KEY` | Tier 2 credential. |
+| `NVIDIA_MODEL` | Tier 2 model name. |
+| `OPENROUTER_API_KEY` | Tier 3 credential. |
+| `APP_URL` | Public URL of this backend, sent as an outbound referer header to the tier 3 provider. Not user-facing. |
+| `AUTH_ENABLED` | `true` to require `X-API-Key` on protected endpoints. Defaults to `false`. |
+| `API_KEYS` | Comma-separated list of accepted API keys, used only when `AUTH_ENABLED=true`. |
+| `DB_PATH` | Path to the SQLite file for sessions, history, feedback and cache. |
+| `SEARCHSAGE_BACKEND_URL` | Backend URL the Streamlit UI should call. |
 
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
+A tier with a missing key is simply skipped in favor of the next one. Any
+subset of the three keys can be configured.
 
-## License
+## API
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+All responses on `/query` and `/query/stream` are shaped as
+`{answer, sources, mode, answer_id}`. `mode` is `live` when the answer
+was grounded in a live search or scrape, `general` otherwise. No vendor
+or provider name ever appears in a response body.
 
-## Acknowledgments
+- `POST /query` — body `{question, session_id?}`. Returns the resolved
+  answer.
+- `GET /query/stream` — query params `question`, `session_id?`. Server-sent
+  events that stream the already-resolved answer out in chunks for a
+  typing effect (the tiered fallback resolves the full answer first, so
+  this is not token-level provider streaming). The final event carries
+  `sources`, `mode` and `answer_id`.
+- `POST /session` — creates a session, returns `{session_id}`. Pass this
+  back on `/query` calls to keep conversation history.
+- `GET /session/{session_id}` — returns that session's message history.
+- `GET /answer/{answer_id}` — public read-only share link for a
+  previously generated answer, no auth required.
+- `POST /feedback` — body `{answer_id, vote}` where `vote` is `up` or
+  `down`.
+- `GET /status` — `{tier1_configured, tier2_configured, tier3_configured}`,
+  booleans only, no provider names.
+- `GET /health` — liveness check.
 
-- OpenAI for pioneering function calling in AI systems
-- DuckDuckGo for their search APIs
-- The open-source community for inspiration and contributions
+Every response carries an `X-Request-ID` header for correlating with
+server logs. Unhandled errors always return a generic message, never
+internal exception text.
 
----
+## Auth and rate limiting
 
-**Ready to give your AI real-time superpowers?** Start with SearchSage and unlock the same capabilities that make ChatGPT so powerful! 🚀
+Set `AUTH_ENABLED=true` and `API_KEYS=key1,key2` to require an
+`X-API-Key` header on every endpoint except `/health` and
+`/answer/{answer_id}`. Rate limiting is always on for `/query` and
+`/query/stream`, keyed by API key when one was presented, by client IP
+otherwise.
+
+## Caching
+
+Answers to context-free questions (no `session_id`) are cached by question
+text in the same SQLite database, so repeated questions do not spend a
+tier's quota. Answers within a session are never cached, since they depend
+on conversation history and are not safe to key by question text alone.
+
+## Notes and tradeoffs
+
+- The in-memory rate limiter resets on process restart and does not share
+  state across multiple backend instances. That is acceptable for this
+  project's single-process free-tier deployment target, but would need a
+  shared store (Redis or similar) behind a load balancer.
+- Tier 3's scrape step is best-effort. Pages that fail to fetch or have no
+  extractable paragraph text are skipped rather than surfaced as errors.
